@@ -31,8 +31,9 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 \*       serial8250_out_IER() (lines 441-449)
 \*   - DMA Engine Providers:
 \*       drivers/dma/virt-dma.c, drivers/dma/virt-dma.h,
-\*       drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c (lines 1068-1079, 1244-1274),
-\*       drivers/dma/pl330.c, drivers/dma/dw/core.c
+\*       drivers/dma/dw-axi-dmac/dw-axi-dmac-platform.c (lines 356-388, 1158-1267),
+\*       drivers/dma/tegra210-adma.c (lines 677-703),
+\*       drivers/dma/ti/omap-dma.c (lines 503-522, 906-942)
 \*
 \* Lock Granularity & Atomicity Model:
 \*   - Every action under `p->port.lock` (`uart_port_lock_irqsave`) executes atomically.
@@ -49,17 +50,18 @@ CONSTANTS
     ALLOW_PAUSE_FAIL_ON_COMPLETE,     \* TRUE if dmaengine_pause() returns non-zero when the transfer
                                       \* has already finished in hardware (e.g. -EAGAIN on dw-axi-dmac
                                       \* because DMAC_CHEN already self-cleared so DWAXIDMAC_IRQ_SUSPENDED
-                                      \* never sets; or -EINVAL on sun6i-dma/mtk-uart-apdma)
+                                      \* never sets; -EBUSY on tegra210-adma; or -EINVAL on ti/omap-dma)
     ALLOW_HW_DONE_COOKIE_IN_PROGRESS, \* TRUE if DMA hardware can finish transferring the RX buffer
-                                      \* before the DMA IRQ/tasklet updates chan->completed_cookie
+                                      \* before the DMA hardirq updates chan->completed_cookie
                                       \* to DMA_COMPLETE:
                                       \*   (a) On dw-axi-dmac: serial8250_handle_irq_locked() holds
                                       \*       port->lock with local IRQs disabled (uart_port_lock_irqsave);
-                                      \*       if dw_axi_dma_interrupt() is routed to the same CPU, it
-                                      \*       cannot run vchan_cookie_complete() while serial8250_rx_dma_flush()
-                                      \*       is executing!
-                                      \*   (b) On pl330 / dw_dmac / dw-edma: dma_cookie_complete() is
-                                      \*       deferred to a bottom-half tasklet/workqueue.
+                                      \*       if the RX transfer finishes in HW before dw_axi_dma_interrupt()
+                                      \*       runs vchan_cookie_complete(), dma_chan_pause() returns -EAGAIN
+                                      \*       while dma_chan_tx_status() returns DMA_IN_PROGRESS.
+                                      \*   (b) On tegra210-adma and ti/omap-dma: hardware clears channel enable
+                                      \*       on transfer completion before the DMA ISR runs, so pause returns
+                                      \*       -EBUSY / -EINVAL while dma_cookie_status() returns DMA_IN_PROGRESS.
     HANDLE_HW_DONE_PAUSE_FAIL,        \* FALSE for v7 as submitted; TRUE to model the proposed fix where
                                       \* a pause failure on a hardware-finished transfer (state.residue == 0)
                                       \* still copies the completed buffer and retires normally instead of
