@@ -1,4 +1,26 @@
-# TLA+ Formal Models for Linux 8250 UART DMA Cancellation (`[PATCH v7 0/5]`)
+# TLA+ models for Linux 8250 UART DMA cancellation
+
+## Updated lifetime models (2026-10-28)
+
+Run `bash run_lifetime.sh` for the audited model variants. See
+[MODEL-NOTES.md](MODEL-NOTES.md) for code mappings, explicit assumptions,
+bounded results and unresolved cases. The runner preserves counterexamples
+in a unique directory instead of deleting trace files from this checkout.
+
+The updated models use actual FIFO positions, separate hardware completion
+from cookie updates, preserve detached callbacks through shutdown, and check
+explicit progress properties. They also cover classic DW status-query
+reentrancy and the OMAP shutdown admission window.
+
+**The original review below is retained as historical material.** Its passing
+`Fixed` configurations do not validate the proposed C fixes: the TX model
+omits status-query callback reentrancy and idealizes teardown, while the RX
+variant uses hardware-completion knowledge unavailable to the generic driver.
+Some cited RX providers also do not reach that generic finite-transfer path.
+The original `run_tlc.sh` removes trace files from the checkout; use the new
+runner for the updated suite.
+
+## Archived v7 review and original models
 
 This repository contains formal TLA+ specifications and TLC model-checking configurations for the Linux kernel `8250` UART TX/RX DMA cancellation and buffer-reuse state machines introduced in:
 
