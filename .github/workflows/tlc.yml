@@ -1,0 +1,37 @@
+name: TLA+ Model Check (8250 UART DMA Cancellation v7)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tlc:
+    name: Run TLC Model Checker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Run all 8 TLA+ configurations
+        run: |
+          chmod +x ./run_tlc.sh
+          ./run_tlc.sh | tee tlc_output.txt
+
+      - name: Publish TLC Results to Job Summary
+        if: always()
+        run: |
+          {
+            echo "## 8250 UART DMA Cancellation (v7) — TLA+ Model Checking Results"
+            echo ""
+            echo '```text'
+            cat tlc_output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
