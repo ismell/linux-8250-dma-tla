@@ -73,16 +73,33 @@ run_case() {
     echo ""
 }
 
-# 1. TX DMA Formal Model (Patch 1/5, Patch 2/5, Patch 3/5, Patch 4/5)
+# 1. v7 TX DMA Formal Model (Patch v7 1/5..4/5)
 run_case "Serial8250TxDmaV7.tla" "Serial8250TxDmaV7_Ideal.cfg"                        "PASS"
 run_case "Serial8250TxDmaV7.tla" "Serial8250TxDmaV7_NoSync.cfg"                       "FAIL" "NoStaleCallbackCorruption"
 run_case "Serial8250TxDmaV7.tla" "Serial8250TxDmaV7_NoSync_Fixed.cfg"                 "PASS"
 run_case "Serial8250TxDmaV7.tla" "Serial8250TxDmaV7_NoSync_BufferAliasing.cfg"        "FAIL" "NoBufferAliasing"
 run_case "Serial8250TxDmaV7.tla" "Serial8250TxDmaV7_NoSync_BufferAliasing_Fixed.cfg"  "PASS"
 
-# 2. RX DMA Formal Model (Patch 5/5)
+# 2. v7 RX DMA Formal Model (Patch v7 5/5)
 run_case "Serial8250RxDmaV7.tla" "Serial8250RxDmaV7_Ideal.cfg"                        "PASS"
 run_case "Serial8250RxDmaV7.tla" "Serial8250RxDmaV7_HwDoneBeforeIrq.cfg"              "FAIL" "NoCompletedRxDataLost"
 run_case "Serial8250RxDmaV7.tla" "Serial8250RxDmaV7_HwDoneBeforeIrq_Fixed.cfg"        "PASS"
 
-echo "All 8 TLA+ model checking configurations matched expected results."
+# 3. v8 RX DMA Formal Model (Patch v8 5/6 & 6/6)
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_Ideal.cfg"                             "PASS"
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_HwDoneBeforeIrq.cfg"                   "PASS"
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_RecoverFallback.cfg"                   "PASS"
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_PartialTransferPauseFails.cfg"         "FAIL" "WorkerBoundedRetries"
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg"   "PASS"
+run_case "Serial8250RxDmaV8.tla" "Serial8250RxDmaV8_DwIdleEnterDuringPausePending.cfg"     "FAIL" "NoAbortedDivisorProgramming"
+
+# 4. v8 TX DMA Formal Model (Patch v8 1/6..4/6 & 6/6)
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_Ideal.cfg"                             "PASS"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_NoSync_ActiveTransferAliasing.cfg"     "FAIL" "NoBufferAliasing"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_NoSync_Fixed.cfg"                      "PASS"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_LostFlushWakeup.cfg"                   "FAIL" "NoLostFlushWaiterWakeup"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg"             "PASS"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_TerminateRetryHang.cfg"                "FAIL" "BoundedTerminateRetries"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg"          "PASS"
+
+echo "All 21 TLA+ model checking configurations (8 v7 + 13 v8) matched expected results."

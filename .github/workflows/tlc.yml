@@ -1,4 +1,4 @@
-name: TLA+ Model Check (8250 UART DMA Cancellation v7)
+name: TLA+ Model Check (8250 UART DMA Cancellation v7 & v8)
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Run all 8 TLA+ configurations
+      - name: Run all 21 TLA+ configurations (v7 & v8)
         run: |
           chmod +x ./run_tlc.sh
           ./run_tlc.sh | tee tlc_output.txt
@@ -29,7 +29,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 8250 UART DMA Cancellation (v7) — TLA+ Model Checking Results"
+            echo "## 8250 UART DMA Cancellation (v7 & v8) — TLA+ Model Checking Results"
             echo ""
             echo '```text'
             cat tlc_output.txt
