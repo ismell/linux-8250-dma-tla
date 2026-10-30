@@ -9,10 +9,10 @@ This repository contains formal TLA+ specifications and TLC model-checking confi
 Prerequisites: `java` (JDK 11+) and `curl`. The runner scripts automatically download `tla2tools.jar` (`v1.8.0`) if not already present:
 
 ```bash
-# Run all 21 configurations (8 v7 + 13 v8):
+# Run all 22 configurations (8 v7 + 14 v8):
 ./run_tlc.sh
 
-# Or run only the 13 v8 configurations:
+# Or run only the 14 v8 configurations:
 ./run_v8.sh
 ```
 
@@ -25,7 +25,7 @@ java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC \
 
 ---
 
-## 1. `[PATCH v8 0/6]` Configuration Matrix & TLC Verification Summary (13 Configs)
+## 1. `[PATCH v8 0/6]` Configuration Matrix & TLC Verification Summary (14 Configs)
 
 Patches modeled in [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) and [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla):
 1. `[PATCH v8 1/6] serial: 8250_omap: separate locked TX DMA completion processing` (`drivers/tty/serial/8250/8250_omap.c`)
@@ -49,7 +49,8 @@ Patches modeled in [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) and [`Serial
 | [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_LostFlushWakeup.cfg`](Serial8250TxDmaV8_LostFlushWakeup.cfg) | `tty_wait_until_sent()` sleeper (`wait_until_sent_sleeping = TRUE`) races with `uart_flush_buffer()` + `uart_close()` (`serial8250_release_dma()`) | `v8` as posted (`FlushWakesWriteWaitDirectly = FALSE`) | **FAIL: `NoLostFlushWaiterWakeup` violated** (9-state trace) | 285 / 204 (depth 9) |
 | [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg`](Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg) | `tty_wait_until_sent()` sleeper races with `uart_flush_buffer()` + `uart_close()` | **Proposed Fix (`FlushWakesWriteWaitDirectly = TRUE`)** | **PASS (`0` errors)** | 2,258 / 1,210 (depth 21) |
 | [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_TerminateRetryHang.cfg`](Serial8250TxDmaV8_TerminateRetryHang.cfg) | `dmaengine_terminate_sync()` returns persistent error during `serial8250_terminate_dma()` (`AllowTerminateFailure = TRUE`) | `v8` as posted (`Patch6RetryOnTerminateFailure = TRUE`, `QuarantineOnTerminateFailure = FALSE`) | **FAIL: `BoundedTerminateRetries` violated** (5-state trace) | 38 / 28 (depth 5) |
-| [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg`](Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg) | `dmaengine_terminate_sync()` returns persistent error during `serial8250_terminate_dma()` (`AllowTerminateFailure = TRUE`) | **Proposed Fix (`QuarantineOnTerminateFailure = TRUE`)**: quarantine channel & retain DMA buffers on shutdown | **PASS (`0` errors)** (`NoUsersAtFree`, `BoundedTerminateRetries`, `ShutdownProgress` hold) | 5,547 / 2,478 (depth 22) |
+| [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_QuarantinePioReopenHazard.cfg`](Serial8250TxDmaV8_QuarantinePioReopenHazard.cfg) | Subsequent `open()` after `close()` quarantined a failed `dmaengine_terminate_sync()` (`AllowReopen = TRUE`, `QuarantineOnTerminateFailure = TRUE`, `AllowTerminateFailure = TRUE`) | **Flawed Reopen (`ReopenFallbackToPio = TRUE`)**: clears `up->dma = NULL` and falls back to PIO while un-terminated DMA descriptor is still active in hardware | **FAIL: `NoConcurrentFifoAccess` violated** (7-state trace) | 98 / 62 (depth 7) |
+| [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg`](Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg) | `dmaengine_terminate_sync()` returns persistent error during `serial8250_terminate_dma()` + subsequent `open()` (`AllowTerminateFailure = TRUE`, `AllowReopen = TRUE`) | **Proposed Fix (`QuarantineOnTerminateFailure = TRUE`, `ReopenFallbackToPio = FALSE`)**: quarantine channel on shutdown (`xmit_blocked = TRUE`), keep `up->dma` intact, and retry `serial8250_terminate_dma()` on `open()` (failing startup with `-EIO` if termination still fails instead of falling back to PIO) | **PASS (`0` errors)** (`NoUsersAtFree`, `BoundedTerminateRetries`, `NoConcurrentFifoAccess`, `QuarantineImpliesXmitBlocked`, `ShutdownProgress` hold) | 13,911 / 6,022 (depth 28) |
 
 ---
 

@@ -63,11 +63,11 @@ vars == <<hw_state, hw_bytes, peer_done, cookie_status, cb_state,
 -----------------------------------------------------------------------------
 (* Helpers corresponding to 8250_port.c and 8250_dma.c *)
 
-\* 8250_port.c:1066: serial8250_rx_dma_recovering(up)
+\* 8250.h:162: serial8250_rx_dma_recovering(up)
 RxDmaRecovering(pause_pending, err, terminating) ==
     pause_pending \/ (err /\ terminating)
 
-\* 8250_port.c:1071: serial8250_out_IER(up, ier)
+\* 8250.h:167-178: serial8250_out_IER(up, ier)
 ComputeHwIer(ier_shadow, pause_pending, err, terminating) ==
     IF RxDmaRecovering(pause_pending, err, terminating)
     THEN FALSE
@@ -250,7 +250,7 @@ TryFlushStep(pause_fails, term_ok) ==
 -----------------------------------------------------------------------------
 (* UART ISR & DW8250 Termios Callers of serial8250_rx_dma_flush() *)
 
-\* 8250_port.c:1850 / 8250_dma.c:371: UART RX timeout / RLSI interrupt calls
+\* 8250_port.c:1819-1820, 1875 / 8250_dma.c:371: UART RX timeout / RLSI interrupt calls
 \* serial8250_rx_dma_flush(up) when bytes have arrived (either peer stopped
 \* after partial burst, hardware completed, or DMA error occurred).
 UartRxTimeoutFlush(term_ok) ==

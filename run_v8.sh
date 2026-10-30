@@ -91,6 +91,7 @@ run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_NoSync_Fixed.cfg"           
 run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_LostFlushWakeup.cfg"                      "FAIL" "NoLostFlushWaiterWakeup"
 run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg"                "PASS"
 run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_TerminateRetryHang.cfg"                   "FAIL" "BoundedTerminateRetries"
+run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_QuarantinePioReopenHazard.cfg"            "FAIL" "NoConcurrentFifoAccess"
 run_case "Serial8250TxDmaV8.tla" "Serial8250TxDmaV8_TerminateRetryHang_Fixed.cfg"             "PASS"
 
-echo "All 13 v8 TLA+ model checking configurations matched expected results."
+echo "All 14 v8 TLA+ model checking configurations matched expected results."
