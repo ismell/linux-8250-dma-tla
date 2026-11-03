@@ -80,9 +80,11 @@ ReportedCount ==
     ELSE 0
 
 \* Provider callback and hardware quiescence check for dmaengine_synchronize()
+LiveCallbacks == {"detached", "entered"}
+
 ProviderDrained ==
     /\ hw_state \notin {"active", "paused", "stopping"}
-    /\ cb_state \notin {"queued", "detached", "entered"}
+    /\ cb_state \notin LiveCallbacks \cup {"queued"}
 
 -----------------------------------------------------------------------------
 (* Initial State: One active RX DMA transfer started by serial8250_rx_dma() *)
@@ -367,7 +369,7 @@ WorkerRecoverSync(term_ok) ==
     /\ work_state = "recover"
     /\ (term_ok \/ AllowTerminateFailure)
     /\ IF term_ok THEN
-           /\ (~DrainCallbacksOnSync \/ ProviderDrained \/ hw_state \in {"active", "paused", "completed", "stopping"})
+           /\ (~DrainCallbacksOnSync \/ cb_state \notin LiveCallbacks \cup {"queued"})
            /\ hw_state' = "idle"
            /\ cb_state' = "none"
            /\ completed_lost' = (completed_lost \/ (hw_bytes = RxSize /\ delivered = 0))

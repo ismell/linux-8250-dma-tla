@@ -32,8 +32,12 @@ CONSTANTS
     AllowClose,                     \* TRUE if uart_shutdown() is modeled
     AllowTerminateFailure,          \* TRUE if terminate_async / terminate_sync can fail
     AllowReopen,                    \* TRUE if reopening after a quarantined close is modeled
-    ReopenFallbackToPio             \* TRUE if reopen clears up->dma and falls back to PIO;
+    ReopenFallbackToPio,            \* TRUE if reopen clears up->dma and falls back to PIO;
                                     \* FALSE if reopen retries terminate_dma and fails open (-EIO)
+    QuarantineGuardsShutdown,       \* TRUE if quarantine skips shutdown FIFO/RPM and aborts
+                                    \* uart_suspend_port() before UART_PM_STATE_OFF
+    QuarantineGuardsAdminOpen       \* TRUE if serial_core.c blocks CAP_SYS_ADMIN open when
+                                    \* startup() fails while state->xmit_blocked / quarantined
 
 VARIABLES
     input,                      \* kfifo in-offset (bytes written to xmit_fifo)
@@ -57,7 +61,8 @@ VARIABLES
     terminate_retries,          \* retry count in serial8250_terminate_dma()
     freed,                      \* TRUE after dma_unmap / kfree in serial8250_release_dma
     dma_quarantined,            \* TRUE if close() quarantined DMA after terminate_dma failure
-    pio_tx_active,              \* TRUE if reopen fell back to PIO TX while DMA was quarantined
+    pio_tx_active,              \* TRUE if PIO accesses UART FIFO while DMA is quarantined
+    uart_powered,               \* TRUE if UART clocks/PM are powered on (not RPM-put or PM_OFF)
     reopen_attempted,           \* TRUE if a subsequent open() after quarantine was attempted
     desc                        \* [Ids -> descriptor state]
 
@@ -65,7 +70,7 @@ vars == <<input, output, writes, flushes, mem, next_id, current_id, tx_size,
           tx_running, tx_terminating, tx_flushed, xmit_ready, xmit_blocked,
           xmit_wakeup_pending, wait_until_sent_sleeping, work_state,
           close_state, terminate_retries, freed, dma_quarantined,
-          pio_tx_active, reopen_attempted, desc>>
+          pio_tx_active, uart_powered, reopen_attempted, desc>>
 
 Ids == 1..MaxTransfers
 Cells == 0..(Capacity - 1)
@@ -105,6 +110,7 @@ Init ==
     /\ freed = FALSE
     /\ dma_quarantined = FALSE
     /\ pio_tx_active = FALSE
+    /\ uart_powered = TRUE
     /\ reopen_attempted = FALSE
     /\ desc = [i \in Ids |-> EmptyDesc]
 
@@ -177,7 +183,7 @@ StartTx ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 \* A caller (e.g., set_termios with TERMIOS_WAIT or tcdrain) invokes
 \* tty_wait_until_sent() (drivers/tty/tty_ioctl.c:179) while xmit_fifo is
@@ -192,7 +198,8 @@ EnterWaitUntilSent ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    work_state, close_state, terminate_retries, freed,
-                   dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 \* User/tty writes n bytes into xmit_fifo (serial_core.c:707 checks
 \* uart_xmit_writable(state)) and kicks TX if idle
@@ -228,7 +235,7 @@ Write(n) ==
     /\ UNCHANGED <<output, flushes, tx_terminating, xmit_ready, xmit_blocked,
                    xmit_wakeup_pending, wait_until_sent_sleeping, work_state,
                    close_state, terminate_retries, freed, dma_quarantined,
-                   pio_tx_active, reopen_attempted>>
+                   pio_tx_active, uart_powered, reopen_attempted>>
 
 -----------------------------------------------------------------------------
 (* DMA Provider Actions *)
@@ -242,7 +249,7 @@ HardwareDone(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 DmaIrq(i) ==
     /\ desc[i].hw = "done"
@@ -253,7 +260,7 @@ DmaIrq(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 Capture(i) ==
     /\ desc[i].cb = "queued"
@@ -263,7 +270,7 @@ Capture(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 Enter(i) ==
     /\ desc[i].cb = "detached"
@@ -273,7 +280,7 @@ Enter(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 \* 8250_dma.c:15: serial8250_tx_dma_complete(p) helper
 CompleteTx(d_after_cb) ==
@@ -326,7 +333,8 @@ Invoke(i) ==
            CompleteTx(d1)
     /\ UNCHANGED <<input, writes, flushes, mem, tx_terminating, xmit_ready,
                    work_state, close_state, terminate_retries, freed,
-                   dma_quarantined, pio_tx_active, reopen_attempted>>
+                   dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted>>
 
 Return(i) ==
     /\ desc[i].cb = "executed"
@@ -336,7 +344,7 @@ Return(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 StopHardware(i) ==
     /\ desc[i].hw = "stopping"
@@ -346,7 +354,7 @@ StopHardware(i) ==
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, close_state,
                    terminate_retries, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted>>
+                   uart_powered, reopen_attempted>>
 
 -----------------------------------------------------------------------------
 (* Patch 3/6 & Patch 4/6: uart_flush_buffer() -> serial8250_tx_dma_flush() *)
@@ -390,7 +398,8 @@ Flush(term_ok) ==
            /\ UNCHANGED <<tx_flushed, xmit_blocked, tx_terminating, work_state, desc>>
     /\ UNCHANGED <<writes, mem, next_id, current_id, tx_size, tx_running,
                    xmit_ready, close_state, terminate_retries, freed,
-                   dma_quarantined, pio_tx_active, reopen_attempted>>
+                   dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted>>
 
 \* 8250_dma.c:53: serial8250_tx_dma_flush_work()
 WorkerBegin ==
@@ -400,7 +409,8 @@ WorkerBegin ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, close_state, terminate_retries,
-                   freed, dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   freed, dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 WorkerSync ==
     /\ work_state = "sync"
@@ -410,7 +420,8 @@ WorkerSync ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, close_state, terminate_retries,
-                   freed, dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   freed, dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 \* Note: Because Flush sets xmit_blocked = TRUE and uart_write() checks
 \* uart_xmit_writable(state) (serial_core.c:707), no new bytes can be written
@@ -436,7 +447,8 @@ WorkerFinish ==
                        wait_until_sent_sleeping>>
     /\ UNCHANGED <<input, output, writes, flushes, mem, next_id, current_id,
                    tx_flushed, xmit_ready, close_state, terminate_retries,
-                   freed, dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   freed, dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 -----------------------------------------------------------------------------
 (* Shutdown / Release DMA (Patch 3/6 + Patch 4/6 + Patch 6/6) *)
@@ -454,7 +466,7 @@ CloseGate ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_blocked, xmit_wakeup_pending, wait_until_sent_sleeping,
                    work_state, freed, dma_quarantined, pio_tx_active,
-                   reopen_attempted, desc>>
+                   uart_powered, reopen_attempted, desc>>
 
 \* 8250_dma.c:541: cancel_work_sync(&dma->tx_flush_work)
 CloseCancel ==
@@ -466,7 +478,8 @@ CloseCancel ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, terminate_retries, freed,
-                   dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 \* 8250_dma.c:508: serial8250_terminate_dma() in Patch 6/6 (118587b34be5)
 \* When Patch6RetryOnTerminateFailure = TRUE and dmaengine_terminate_sync()
@@ -477,17 +490,30 @@ CloseTerminate(ok) ==
     /\ close_state = "terminate"
     /\ (ok \/ AllowTerminateFailure)
     /\ IF ok THEN
-           /\ desc' = TerminateDescriptors(desc, TRUE)
+           /\ desc' = TerminateDescriptors(desc, FALSE)
            /\ close_state' = "sync"
            /\ UNCHANGED <<terminate_retries, wait_until_sent_sleeping,
-                          dma_quarantined, xmit_blocked>>
+                          dma_quarantined, xmit_blocked, pio_tx_active,
+                          uart_powered>>
        ELSE IF QuarantineOnTerminateFailure /\ terminate_retries >= MaxTerminateRetries - 1 THEN
            \* Proposed fix: after bounded retries, quarantine/leak the failed
            \* channel and buffer (freed remains FALSE, xmit_blocked is set via
            \* uart_xmit_block(&p->port)) and allow shutdown to complete cleanly.
+           \* - When QuarantineGuardsShutdown = TRUE: serial8250_do_shutdown()
+           \*   skips serial8250_clear_fifos()/UART_RX and retains runtime PM, and
+           \*   uart_suspend_port() aborts before UART_PM_STATE_OFF.
+           \* - When QuarantineGuardsShutdown = FALSE: serial8250_do_shutdown()
+           \*   touches UART_FCR/UART_RX (pio_tx_active' = TRUE) and drops runtime PM
+           \*   / enters UART_PM_STATE_OFF (uart_powered' = FALSE) while DMA is active.
            /\ close_state' = "closed"
            /\ dma_quarantined' = TRUE
            /\ xmit_blocked' = TRUE
+           /\ IF QuarantineGuardsShutdown THEN
+                  /\ pio_tx_active' = pio_tx_active
+                  /\ uart_powered' = TRUE
+              ELSE
+                  /\ pio_tx_active' = TRUE
+                  /\ uart_powered' = FALSE
            /\ wait_until_sent_sleeping' =
                IF FlushWakesWriteWaitDirectly /\ input = output
                THEN FALSE
@@ -500,16 +526,17 @@ CloseTerminate(ok) ==
                THEN terminate_retries + 1
                ELSE MaxTerminateRetries
            /\ UNCHANGED <<desc, wait_until_sent_sleeping, dma_quarantined,
-                          xmit_blocked>>
+                          xmit_blocked, pio_tx_active, uart_powered>>
        ELSE
            \* v7 behavior: ignored terminate_sync failure and proceeded to free
            /\ close_state' = "free"
            /\ UNCHANGED <<terminate_retries, desc, wait_until_sent_sleeping,
-                          dma_quarantined, xmit_blocked>>
+                          dma_quarantined, xmit_blocked, pio_tx_active,
+                          uart_powered>>
     /\ UNCHANGED <<input, output, writes, flushes, mem, next_id, current_id,
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_wakeup_pending, work_state, freed,
-                   pio_tx_active, reopen_attempted>>
+                   reopen_attempted>>
 
 \* dmaengine_synchronize() inside dmaengine_terminate_sync()
 CloseSync ==
@@ -520,7 +547,8 @@ CloseSync ==
                    tx_size, tx_running, tx_terminating, tx_flushed,
                    xmit_ready, xmit_blocked, xmit_wakeup_pending,
                    wait_until_sent_sleeping, work_state, terminate_retries,
-                   freed, dma_quarantined, pio_tx_active, reopen_attempted, desc>>
+                   freed, dma_quarantined, pio_tx_active, uart_powered,
+                   reopen_attempted, desc>>
 
 \* 8250_dma.c:556-565: dma_unmap_single() + Clear flags + uart_xmit_unblock(&p->port)
 \* Notice that in uart_xmit_unblock(&p->port) (serial_core.c:185-192):
@@ -537,6 +565,7 @@ CloseFree ==
     /\ tx_terminating' = FALSE
     /\ xmit_blocked' = FALSE
     /\ dma_quarantined' = FALSE
+    /\ uart_powered' = FALSE
     /\ LET wakeup_res ==
            IF xmit_wakeup_pending
            THEN ApplyUartWriteWakeup(xmit_ready, FALSE, xmit_wakeup_pending,
@@ -560,8 +589,10 @@ CloseFree ==
 \* - When ReopenFallbackToPio = FALSE (safe contract): retains up->dma and
 \*   retries serial8250_terminate_dma() during serial8250_request_dma(). If
 \*   termination still fails (ok = FALSE), startup fails with -EIO and the port
-\*   remains closed with DMA quarantined; if termination succeeds and drains
-\*   (ok = TRUE), DMA state is cleaned up and the port reopens cleanly.
+\*   remains closed with DMA quarantined (unless QuarantineGuardsAdminOpen = FALSE,
+\*   where CAP_SYS_ADMIN administrative open in serial_core.c allows TIOCSSERIAL
+\*   to release port resources while DMA is active); if termination succeeds and
+\*   drains (ok = TRUE), DMA state is cleaned up and the port reopens cleanly.
 ReopenPort(ok) ==
     /\ AllowReopen
     /\ ~reopen_attempted
@@ -571,6 +602,7 @@ ReopenPort(ok) ==
     /\ IF ReopenFallbackToPio THEN
            /\ ok
            /\ pio_tx_active' = TRUE
+           /\ uart_powered' = TRUE
            /\ xmit_ready' = TRUE
            /\ close_state' = "open"
            /\ UNCHANGED <<input, output, writes, flushes, mem, next_id,
@@ -601,15 +633,18 @@ ReopenPort(ok) ==
                   /\ terminate_retries' = 0
                   /\ dma_quarantined' = FALSE
                   /\ pio_tx_active' = FALSE
+                  /\ uart_powered' = TRUE
                   /\ close_state' = "open"
                   /\ UNCHANGED <<writes, flushes, work_state, freed>>
               ELSE
-                  UNCHANGED <<input, output, writes, flushes, mem, next_id,
-                              current_id, tx_size, tx_running, tx_terminating,
-                              tx_flushed, xmit_ready, xmit_blocked,
-                              xmit_wakeup_pending, wait_until_sent_sleeping,
-                              work_state, close_state, terminate_retries,
-                              freed, dma_quarantined, pio_tx_active, desc>>
+                  /\ freed' = IF (QuarantineGuardsAdminOpen /\ dma_quarantined) THEN freed ELSE TRUE
+                  /\ UNCHANGED <<input, output, writes, flushes, mem, next_id,
+                                 current_id, tx_size, tx_running, tx_terminating,
+                                 tx_flushed, xmit_ready, xmit_blocked,
+                                 xmit_wakeup_pending, wait_until_sent_sleeping,
+                                 work_state, close_state, terminate_retries,
+                                 dma_quarantined, pio_tx_active, uart_powered,
+                                 desc>>
 
 -----------------------------------------------------------------------------
 (* Next-State Relation & Fairness *)
@@ -669,6 +704,7 @@ TypeOK ==
     /\ terminate_retries \in 0..MaxTerminateRetries
     /\ dma_quarantined \in BOOLEAN
     /\ pio_tx_active \in BOOLEAN
+    /\ uart_powered \in BOOLEAN
     /\ reopen_attempted \in BOOLEAN
 
 \* Active DMA hardware must never read from xmit_fifo cells that have been
@@ -704,6 +740,11 @@ BoundedTerminateRetries ==
 \* is still active or stopping in hardware
 NoConcurrentFifoAccess ==
     ~pio_tx_active \/ (\A i \in Ids : desc[i].hw \notin {"active", "stopping"})
+
+\* Active DMA hardware must never access the UART FIFO while the UART
+\* peripheral is powered off / clock-gated (serial8250_rpm_put or UART_PM_STATE_OFF)
+NoDmaOnPoweredOffUart ==
+    uart_powered \/ (\A i \in Ids : desc[i].hw \notin {"active", "stopping"})
 
 \* Whenever TX DMA is quarantined after a failed termination, xmit_blocked
 \* must remain set (serial8250_release_dma() calls uart_xmit_block(&p->port)
