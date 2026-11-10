@@ -63,13 +63,13 @@ vars == <<hw_state, hw_bytes, peer_done, cookie_status, cb_state,
 -----------------------------------------------------------------------------
 (* Helpers corresponding to 8250_port.c and 8250_dma.c *)
 
-\* 8250.h:162: serial8250_rx_dma_recovering(up)
-RxDmaRecovering(pause_pending, err, terminating) ==
-    pause_pending \/ (err /\ terminating)
+\* 8250.h:166-171: serial8250_rx_dma_recovering(up)
+RxDmaRecovering(pause_pending, err, running, terminating) ==
+    pause_pending \/ ((err \/ running) /\ terminating)
 
-\* 8250.h:167-178: serial8250_out_IER(up, ier)
-ComputeHwIer(ier_shadow, pause_pending, err, terminating) ==
-    IF RxDmaRecovering(pause_pending, err, terminating)
+\* 8250.h:173-184: serial8250_out_IER(up, ier)
+ComputeHwIer(ier_shadow, pause_pending, err, running, terminating) ==
+    IF RxDmaRecovering(pause_pending, err, running, terminating)
     THEN FALSE
     ELSE ier_shadow
 
@@ -178,19 +178,22 @@ EnterCallback ==
                    hw_ier_rx_enabled, work_state, worker_retries, shutting_down,
                    flushes, delivered, completed_lost, dw_divisor_aborted>>
 
-\* 8250_dma.c:156: dma_rx_complete() under port->lock
+\* 8250_dma.c:158: dma_rx_complete() under port->lock
 InvokeCallback ==
     /\ cb_state = "entered"
     /\ cb_state' = "none"
-    /\ IF shutting_down \/ rx_terminating \/ rx_pause_pending \/ ~rx_running THEN
+    /\ IF shutting_down
+          \/ RxDmaRecovering(rx_pause_pending, rx_err, rx_running, rx_terminating)
+          \/ rx_terminating
+          \/ ~rx_running THEN
            UNCHANGED <<rx_running, rx_terminating, rx_err, hw_ier_rx_enabled,
                        work_state, delivered>>
        ELSE IF cookie_status = "ERROR" THEN
-           \* 8250_dma.c:169-173: status == DMA_ERROR -> serial8250_rx_dma_recover(p)
+           \* 8250_dma.c:179-182: status == DMA_ERROR -> serial8250_rx_dma_recover(p)
            \* + schedule_work(&dma->rx_flush_work)
            /\ rx_err' = TRUE
            /\ rx_terminating' = TRUE
-           /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, TRUE)
+           /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, rx_running, TRUE)
            /\ work_state' = IF work_state = "idle" THEN "queued" ELSE work_state
            /\ UNCHANGED <<rx_running, delivered>>
        ELSE IF cookie_status = "COMPLETE" THEN
@@ -224,16 +227,16 @@ TryFlushStep(pause_fails, term_ok) ==
         \* 8250_dma.c:126-129: status == DMA_ERROR -> goto recover
         /\ rx_err' = TRUE
         /\ rx_terminating' = TRUE
-        /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, TRUE)
+        /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, rx_running, TRUE)
         /\ UNCHANGED <<hw_state, cb_state, rx_running, rx_pause_pending, delivered>>
     ELSE IF pause_fails /\ cookie_status # "COMPLETE" THEN
-        \* 8250_dma.c:130-139: ret && status != DMA_COMPLETE
+        \* 8250_dma.c:130-141: ret && status != DMA_COMPLETE
         /\ rx_pause_pending' = TRUE
-        /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, TRUE, rx_err, rx_terminating)
+        /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, TRUE, rx_err, rx_running, rx_terminating)
         /\ UNCHANGED <<hw_state, cb_state, rx_running, rx_terminating, rx_err, delivered>>
     ELSE
         \* Pause succeeded OR status == DMA_COMPLETE:
-        \* 8250_dma.c:141-149: serial8250_rx_dma_copy() + dmaengine_terminate_async()
+        \* 8250_dma.c:143-151: serial8250_rx_dma_copy() + dmaengine_terminate_async()
         /\ delivered' = delivered + ReportedCount
         /\ rx_terminating' = TRUE
         /\ IF term_ok THEN
@@ -246,7 +249,7 @@ TryFlushStep(pause_fails, term_ok) ==
            ELSE
                \* dmaengine_terminate_async() failed -> goto recover
                /\ rx_err' = TRUE
-               /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, TRUE)
+               /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, rx_pause_pending, TRUE, rx_running, TRUE)
                /\ UNCHANGED <<hw_state, cb_state, rx_running, rx_pause_pending>>
 
 -----------------------------------------------------------------------------
@@ -303,7 +306,7 @@ WorkerStart ==
                    shutting_down, flushes, delivered, completed_lost,
                    dw_divisor_aborted>>
 
-\* 8250_dma.c:195-204: one locked iteration of the for (;;) loop in
+\* 8250_dma.c:240-267: one locked iteration of the for (;;) loop in
 \* serial8250_rx_dma_flush_work().
 WorkerLoopIteration(pause_retry_succeeds, term_ok) ==
     /\ work_state = "loop"
@@ -323,12 +326,15 @@ WorkerLoopIteration(pause_retry_succeeds, term_ok) ==
            IF BoundPauseRetries /\ cookie_status # "ERROR" /\ pause_fails
               /\ cookie_status # "COMPLETE" /\ worker_retries >= MaxWorkerRetries - 1
            THEN
-               \* Proposed fix: after bounded retries, escalate to serial8250_rx_dma_recover(p)
-               \* so the worker exits the retry loop and runs dmaengine_terminate_sync().
+               \* v11 non-sticky pause-timeout recovery (8250_dma.c:251-259):
+               \* After 1 second of failed pause retries, set dma->rx_terminating = true
+               \* while keeping dma->rx_running = 1 and dma->rx_err = false so
+               \* recover = dma->rx_err || (dma->rx_running && dma->rx_terminating)
+               \* runs serial8250_rx_dma_terminate(p) without permanently disabling RX DMA.
                /\ rx_pause_pending' = TRUE
-               /\ rx_err' = TRUE
+               /\ rx_err' = rx_err
                /\ rx_terminating' = TRUE
-               /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, TRUE, TRUE, TRUE)
+               /\ hw_ier_rx_enabled' = ComputeHwIer(ier_rx_enabled, TRUE, rx_err, rx_running, TRUE)
                /\ work_state' = "recover"
                /\ UNCHANGED <<hw_state, cb_state, rx_running, delivered>>
            ELSE
@@ -340,7 +346,7 @@ WorkerLoopIteration(pause_retry_succeeds, term_ok) ==
                         THEN "recover"
                         ELSE "sync"
        ELSE
-           /\ work_state' = IF rx_err THEN "recover" ELSE "sync"
+           /\ work_state' = IF rx_err \/ (rx_running /\ rx_terminating) THEN "recover" ELSE "sync"
            /\ UNCHANGED <<hw_state, cb_state, rx_running, rx_terminating,
                           rx_pause_pending, rx_err, hw_ier_rx_enabled,
                           delivered>>
@@ -364,26 +370,34 @@ WorkerSleepRetry ==
                    ier_rx_enabled, hw_ier_rx_enabled, shutting_down, flushes,
                    delivered, completed_lost, dw_divisor_aborted>>
 
-\* 8250_dma.c:210-216: if (recover) dmaengine_terminate_sync(dma->rxchan)
+\* 8250_dma.c:195-226, 272-274: if (recover) { if (serial8250_rx_dma_terminate(p)) return; }
 WorkerRecoverSync(term_ok) ==
     /\ work_state = "recover"
     /\ (term_ok \/ AllowTerminateFailure)
-    /\ IF term_ok THEN
+    /\ IF shutting_down THEN
+           \* 8250_dma.c:207-208: if (dma->shutting_down) return -ESHUTDOWN;
+           \* Shutdown cancels rx_flush_work and takes over DMA termination in
+           \* serial8250_release_dma() -> serial8250_terminate_dma().
+           /\ work_state' = "idle"
+           /\ UNCHANGED <<hw_state, cb_state, completed_lost>>
+       ELSE IF term_ok THEN
            /\ (~DrainCallbacksOnSync \/ cb_state \notin LiveCallbacks \cup {"queued"})
            /\ hw_state' = "idle"
            /\ cb_state' = "none"
            /\ completed_lost' = (completed_lost \/ (hw_bytes = RxSize /\ delivered = 0))
            /\ work_state' = "post_sync"
        ELSE
-           \* 8250_dma.c:215: return early, retaining ownership and keeping RX masked
-           /\ work_state' = "idle"
+           \* 8250_dma.c:221-224: Failed termination cannot release the buffer
+           \* or the UART FIFO; serial8250_rx_dma_terminate(p) stays in "recover"
+           \* and retries with exponential backoff on rx_pause_wait.
+           /\ work_state' = "recover"
            /\ UNCHANGED <<hw_state, cb_state, completed_lost>>
     /\ UNCHANGED <<hw_bytes, peer_done, cookie_status, rx_running,
                    rx_terminating, rx_pause_pending, rx_err, ier_rx_enabled,
                    hw_ier_rx_enabled, worker_retries, shutting_down, flushes,
                    delivered, dw_divisor_aborted>>
 
-\* 8250_dma.c:218: else dmaengine_synchronize(dma->rxchan)
+\* 8250_dma.c:276: else dmaengine_synchronize(dma->rxchan)
 WorkerSynchronize ==
     /\ work_state = "sync"
     /\ (~DrainCallbacksOnSync \/ ProviderDrained)
@@ -394,23 +408,25 @@ WorkerSynchronize ==
                    shutting_down, flushes, delivered, completed_lost,
                    dw_divisor_aborted>>
 
-\* 8250_dma.c:221-225: final scoped_guard(uart_port_lock_irqsave, &p->port).
+\* 8250_dma.c:279-292: final scoped_guard(uart_port_lock_irqsave, &p->port).
 \* Models the state immediately after clearing rx_pause_pending, rx_terminating,
-\* and rx_running (8250_dma.c:223-225), right before serial8250_rx_dma(p)
-\* re-arms dma->rx_buf (or serial8250_rx_dma_Fallback_to_pio(p) re-enables RX IER).
+\* and rx_running (8250_dma.c:281-283), right before serial8250_rx_dma(p)
+\* re-arms dma->rx_buf (or PIO fallback re-enables RX IER).
 \* Checking NoPrematureBufferReuse in this terminal state proves that dma->rx_buf
 \* is never reused while the previous DMA transfer is still active, paused, or stopping.
 WorkerFinish ==
     /\ work_state = "post_sync"
     /\ work_state' = "idle"
-    /\ rx_pause_pending' = FALSE
-    /\ rx_terminating' = FALSE
-    /\ rx_running' = FALSE
-    /\ hw_ier_rx_enabled' =
-        IF shutting_down THEN FALSE
-        ELSE IF rx_err \/ rx_pause_pending
-             THEN ComputeHwIer(ier_rx_enabled, FALSE, rx_err, FALSE)
-             ELSE hw_ier_rx_enabled
+    /\ LET restore_rx == rx_err \/ (rx_running /\ rx_terminating) \/ rx_pause_pending
+       IN
+       /\ rx_pause_pending' = FALSE
+       /\ rx_terminating' = FALSE
+       /\ rx_running' = FALSE
+       /\ hw_ier_rx_enabled' =
+           IF shutting_down THEN FALSE
+           ELSE IF restore_rx
+                THEN ComputeHwIer(ier_rx_enabled, FALSE, rx_err, FALSE, FALSE)
+                ELSE hw_ier_rx_enabled
     /\ UNCHANGED <<hw_state, hw_bytes, peer_done, cookie_status, cb_state,
                    rx_err, ier_rx_enabled, worker_retries, shutting_down,
                    flushes, delivered, completed_lost, dw_divisor_aborted>>
@@ -504,6 +520,12 @@ NoPrematureBufferReuse ==
 \* retrying pause forever when a partial RX transfer cannot be paused
 WorkerBoundedRetries ==
     worker_retries < MaxWorkerRetries
+
+\* Invariant checking that v11's 1-second pause-timeout recovery is non-sticky:
+\* rx_err remains FALSE (so RX DMA stays enabled for future transfers) unless a
+\* real DMA_ERROR or dmaengine_terminate_async() failure occurred.
+NonStickyPauseTimeoutRecovery ==
+    (~AllowDmaError /\ ~AllowTerminateFailure) => ~rx_err
 
 \* Invariant checking that dw8250_set_divisor() is not silently aborted
 NoAbortedDivisorProgramming ==

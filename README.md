@@ -1,4 +1,4 @@
-# TLA+ Formal Models for Linux 8250 UART DMA Cancellation (`[PATCH v9 0/8]`, `[PATCH v8 0/6]` & `[PATCH v7 0/5]`)
+# TLA+ Formal Models for Linux 8250 UART DMA Cancellation (`[PATCH v11 0/8]`, `[PATCH v10 0/8]`, `[PATCH v9 0/8]`, `[PATCH v8 0/6]` & `[PATCH v7 0/5]`)
 
 This repository contains formal TLA+ specifications and TLC model-checking configurations for the Linux kernel `8250` UART TX/RX DMA cancellation, flush workqueue, and buffer-reuse state machines introduced by James Hilliard (`<james.hilliard1@gmail.com>`).
 
@@ -9,10 +9,10 @@ This repository contains formal TLA+ specifications and TLC model-checking confi
 Prerequisites: `java` (JDK 11+) and `curl`. The runner scripts automatically download `tla2tools.jar` (`v1.8.0`) if not already present:
 
 ```bash
-# Run all 24 configurations (8 v7 + 16 v8):
+# Run all 24 configurations (8 v7 + 16 v8/v9/v10/v11):
 ./run_tlc.sh
 
-# Or run only the 16 v8 configurations:
+# Or run only the 16 v8/v9/v10/v11 configurations:
 ./run_v8.sh
 ```
 
@@ -25,25 +25,25 @@ java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC \
 
 ---
 
-## 1. `[PATCH v9 0/8]` & `[PATCH v8 0/6]` Configuration Matrix & TLC Verification Summary (16 Configs)
+## 1. `[PATCH v11 0/8]` .. `[PATCH v8 0/6]` Configuration Matrix & TLC Verification Summary (16 Configs)
 
-Patches modeled in [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) and [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) across `[PATCH v9 0/8]` and `[PATCH v8 0/6]`:
-- `[PATCH v9 1/8]` (`61c4d4ee433e`) / `[PATCH v8 1/6]`: `serial: 8250_omap: separate locked TX DMA completion processing` (`drivers/tty/serial/8250/8250_omap.c`)
-- `[PATCH v9 2/8]` (`ecbf29956c50`) / `[PATCH v8 2/6]`: `serial: serialize asynchronous write wakeups with the port lock` (`drivers/tty/serial/serial_core.c`, `st-asc.c`, etc.)
-- `[PATCH v9 3/8]` (`9f938fd9a1b5`): `serial: 8250_omap: serialize RX DMA completion and flushing` (`drivers/tty/serial/8250/8250_omap.c`, split from v8 Patch 5/6)
-- `[PATCH v9 4/8]` (`52a387e30eb2`): `serial: 8250_omap: quiesce DMA IRQ handling before shutdown` (`drivers/tty/serial/8250/8250_omap.c`, split from v8 Patch 5/6)
-- `[PATCH v9 5/8]` (`3627ef40819d`) / `[PATCH v8 3/6]`: `serial: core: allow drivers to reserve flushed transmit storage` (`include/linux/serial_core.h`, `drivers/tty/serial/serial_core.c`). `[PATCH v9 5/8]` (`3627ef40819d`) adds `wake_up_interruptible(&tty->write_wait)` in `uart_flush_buffer()` (`FlushWakesWriteWaitDirectly = TRUE`, verified by `Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg`).
-- `[PATCH v9 6/8]` (`59ed88961923`) / `[PATCH v8 4/6]`: `serial: 8250: drain canceled TX DMA before reusing its buffer` (`drivers/tty/serial/8250/8250.h`, `8250_dma.c`, `8250_port.c`)
-- `[PATCH v9 7/8]` (`3d54c6eb967b`) / `[PATCH v8 5/6]`: `serial: 8250: retire canceled RX DMA before reusing the receive buffer` (`drivers/tty/serial/8250/8250.h`, `8250_dma.c`, `8250_port.c`, `8250_dw.c`). `[PATCH v9 7/8]` (`3d54c6eb967b`) adds `1 ms -> 1 s` exponential backoff while keeping the unbounded retry loops modeled in `Serial8250RxDmaV8_PartialTransferPauseFails.cfg`.
-- `[PATCH v9 8/8]` (`b91e9811255a`) / `[PATCH v8 6/6]`: `serial: 8250: retain DMA resources when termination fails` (`drivers/tty/serial/8250/8250_dma.c`, `8250_omap.c`, `8250_port.c`). `[PATCH v9 8/8]` (`b91e9811255a`) adds `1 ms -> 1 s` exponential backoff while keeping the unbounded retry loops modeled in `Serial8250TxDmaV8_TerminateRetryHang.cfg`.
+Patches modeled in [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) and [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) across `[PATCH v11 0/8]` (`05c313b1d082..9fef7190a98d`), `[PATCH v10 0/8]`, `[PATCH v9 0/8]`, and `[PATCH v8 0/6]`:
+- `[PATCH v11 1/8]` (`05c313b1d082`) / `[PATCH v9 1/8]` (`61c4d4ee433e`) / `[PATCH v8 1/6]`: `serial: 8250_omap: separate locked TX DMA completion processing` (`drivers/tty/serial/8250/8250_omap.c`)
+- `[PATCH v11 2/8]` (`ebbb6af5da23`) / `[PATCH v9 2/8]` (`ecbf29956c50`) / `[PATCH v8 2/6]`: `serial: serialize asynchronous write wakeups with the port lock` (`drivers/tty/serial/serial_core.c`, `st-asc.c`, `sb1250-duart.c`, `sccnxp.c`, etc.)
+- `[PATCH v11 3/8]` (`c1cabe09446b`) / `[PATCH v9 3/8]` (`9f938fd9a1b5`): `serial: 8250_omap: serialize RX DMA completion and flushing` (`drivers/tty/serial/8250/8250_omap.c`, split from v8 Patch 5/6)
+- `[PATCH v11 4/8]` (`fc8eadc2580d`) / `[PATCH v9 4/8]` (`52a387e30eb2`): `serial: 8250_omap: quiesce DMA IRQ handling before shutdown` (`drivers/tty/serial/8250/8250_omap.c`, split from v8 Patch 5/6)
+- `[PATCH v11 5/8]` (`c72b5dcc6300`) / `[PATCH v9 5/8]` (`3627ef40819d`) / `[PATCH v8 3/6]`: `serial: core: allow drivers to reserve flushed transmit storage` (`include/linux/serial_core.h`, `drivers/tty/serial/serial_core.c`). Adds `wake_up_interruptible(&tty->write_wait)` in `uart_flush_buffer()` (`FlushWakesWriteWaitDirectly = TRUE`, verified by `Serial8250TxDmaV8_LostFlushWakeup_Fixed.cfg`).
+- `[PATCH v11 6/8]` (`52f894e57438`) / `[PATCH v9 6/8]` (`59ed88961923`) / `[PATCH v8 4/6]`: `serial: 8250: drain canceled TX DMA before reusing its buffer` (`drivers/tty/serial/8250/8250.h`, `8250_dma.c`, `8250_port.c`)
+- `[PATCH v11 7/8]` (`94d6b40b9b64`) / `[PATCH v10 7/8]` (`7d90d4421e16`) / `[PATCH v9 7/8]` (`3d54c6eb967b`) / `[PATCH v8 5/6]`: `serial: 8250: retire canceled RX DMA before reusing the receive buffer` (`drivers/tty/serial/8250/8250.h`, `8250_dma.c`, `8250_port.c`, `8250_dw.c`). `[PATCH v11 7/8]` (`94d6b40b9b64`) bounds ambiguous pause retries to 1 second (`BoundPauseRetries = TRUE`) and implements non-sticky pause-timeout recovery (`dma->rx_terminating = true` while `dma->rx_running == 1` and `dma->rx_err == false`, verified by `Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg` with `NonStickyPauseTimeoutRecovery`) plus `serial8250_rx_dma_terminate(p)`.
+- `[PATCH v11 8/8]` (`9fef7190a98d`) / `[PATCH v9 8/8]` (`b91e9811255a`) / `[PATCH v8 6/6]`: `serial: 8250: retain DMA resources when termination fails` (`drivers/tty/serial/8250/8250_dma.c`, `8250_omap.c`, `8250_port.c`).
 
-| Model | Configuration (`.cfg`) | DMA / Hardware Environment | Mode (`v8`/`v9` vs Fix) | Expected TLC Result | States Generated / Distinct |
+| Model | Configuration (`.cfg`) | DMA / Hardware Environment | Mode (`v8`/`v9` vs `v11`/Fix) | Expected TLC Result | States Generated / Distinct |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_Ideal.cfg`](Serial8250RxDmaV8_Ideal.cfg) | Standard DMA engine (`dmaengine_pause() == 0`, `.device_synchronize` implemented) | `v8` as posted | **PASS (`0` errors)** | 121 / 71 (depth 10) |
-| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_HwDoneBeforeIrq.cfg`](Serial8250RxDmaV8_HwDoneBeforeIrq.cfg) | Hardware finishes full RX transfer (`hw_state = "completed"`) before DMA hardirq updates `completed_cookie` (`PauseFailsWhenHwCompleted = TRUE`) | `v8` as posted (`rx_pause_pending` retry waits for `DmaIrq`) | **PASS (`0` errors)** — `v7` data-loss bug fixed | 347 / 173 (depth 15) |
-| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_RecoverFallback.cfg`](Serial8250RxDmaV8_RecoverFallback.cfg) | `DMA_ERROR`, `PauseFailsWhenHwCompleted = TRUE`, `dmaengine_terminate_async()` / `dmaengine_terminate_sync()` failures (`AllowTerminateFailure = TRUE`), and port shutdown (`AllowClose = TRUE`) | `v8` as posted | **PASS (`0` errors)** | 1,373 / 480 (depth 17) |
-| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_PartialTransferPauseFails.cfg`](Serial8250RxDmaV8_PartialTransferPauseFails.cfg) | Partial RX burst (`hw_bytes = 1 < RxSize`, `peer_done = TRUE`) on DMA engine where `dmaengine_pause()` returns `-ENXIO` (`PauseFailsWhenHwActive = TRUE`, `PauseSucceedsOnRetry = FALSE`) | `v8` as posted (`BoundPauseRetries = FALSE`) | **FAIL: `WorkerBoundedRetries` violated** (9-state trace) | 35 / 30 (depth 9) |
-| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg`](Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg) | Both `PauseFailsWhenHwCompleted = TRUE` and `PauseFailsWhenHwActive = TRUE` (`PauseSucceedsOnRetry = FALSE`) | **Proposed Fix (`BoundPauseRetries = TRUE`)**: bounded retry escalates to `serial8250_rx_dma_recover()` | **PASS (`0` errors)** (`FlushWorkProgress` & `NoCompletedRxDataLost` hold) | 74 / 54 (depth 11) |
+| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_Ideal.cfg`](Serial8250RxDmaV8_Ideal.cfg) | Standard DMA engine (`dmaengine_pause() == 0`, `.device_synchronize` implemented) | `v8`–`v11` | **PASS (`0` errors)** | 121 / 71 (depth 10) |
+| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_HwDoneBeforeIrq.cfg`](Serial8250RxDmaV8_HwDoneBeforeIrq.cfg) | Hardware finishes full RX transfer (`hw_state = "completed"`) before DMA hardirq updates `completed_cookie` (`PauseFailsWhenHwCompleted = TRUE`) | `v8`–`v11` (`rx_pause_pending` retry waits for `DmaIrq`) | **PASS (`0` errors)** — `v7` data-loss bug fixed | 347 / 173 (depth 15) |
+| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_RecoverFallback.cfg`](Serial8250RxDmaV8_RecoverFallback.cfg) | `DMA_ERROR`, `PauseFailsWhenHwCompleted = TRUE`, `dmaengine_terminate_async()` / `dmaengine_terminate_sync()` failures (`AllowTerminateFailure = TRUE`), and port shutdown (`AllowClose = TRUE`) | `v11` (`serial8250_rx_dma_terminate()` retries until success or `shutting_down`) | **PASS (`0` errors)** | 1,360 / 444 (depth 17) |
+| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_PartialTransferPauseFails.cfg`](Serial8250RxDmaV8_PartialTransferPauseFails.cfg) | Partial RX burst (`hw_bytes = 1 < RxSize`, `peer_done = TRUE`) on DMA engine where `dmaengine_pause()` returns `-ENXIO` (`PauseFailsWhenHwActive = TRUE`, `PauseSucceedsOnRetry = FALSE`) | `v8`/`v9` (`BoundPauseRetries = FALSE`) | **FAIL: `WorkerBoundedRetries` violated** (9-state trace) | 35 / 30 (depth 9) |
+| [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg`](Serial8250RxDmaV8_PartialTransferPauseFails_Fixed.cfg) | Both `PauseFailsWhenHwCompleted = TRUE` and `PauseFailsWhenHwActive = TRUE` (`PauseSucceedsOnRetry = FALSE`) | **`v11` (`BoundPauseRetries = TRUE`)**: bounded 1s retry escalates to non-sticky `serial8250_rx_dma_terminate()` (`rx_err = FALSE`) | **PASS (`0` errors)** (`FlushWorkProgress`, `NoCompletedRxDataLost` & `NonStickyPauseTimeoutRecovery` hold) | 74 / 54 (depth 11) |
 | [`Serial8250RxDmaV8.tla`](Serial8250RxDmaV8.tla) | [`Serial8250RxDmaV8_DwIdleEnterDuringPausePending.cfg`](Serial8250RxDmaV8_DwIdleEnterDuringPausePending.cfg) | `dw8250_set_divisor()` -> `dw8250_idle_enter()` called while `rx_pause_pending = TRUE` (`AllowDwSetDivisor = TRUE`) | `v8` as posted | **FAIL: `NoAbortedDivisorProgramming` violated** (5-state trace) | 11 / 11 (depth 5) |
 | [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_Ideal.cfg`](Serial8250TxDmaV8_Ideal.cfg) | `.device_synchronize` implemented (`DrainCallbacksOnSync = TRUE`), plus `uart_flush_buffer()`, `tty_wait_until_sent()`, and `uart_close()` | `v8` as posted (`CheckTxRunning = TRUE`) | **PASS (`0` errors)** (`ReservationProgress` & `ShutdownProgress` hold) | 16,749 / 7,282 (depth 28) |
 | [`Serial8250TxDmaV8.tla`](Serial8250TxDmaV8.tla) | [`Serial8250TxDmaV8_NoSync_ActiveTransferAliasing.cfg`](Serial8250TxDmaV8_NoSync_ActiveTransferAliasing.cfg) | `.device_synchronize == NULL` (`DrainCallbacksOnSync = FALSE`, `MaxTransfers = 3`) | `v8` as posted (`CheckTxRunning = TRUE`, `CheckTxCookieStatus = FALSE`) | **FAIL: `NoBufferAliasing` violated** (13-state trace) | 628 / 352 (depth 13) |
